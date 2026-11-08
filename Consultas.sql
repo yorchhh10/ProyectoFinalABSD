@@ -1,6 +1,14 @@
 USE Gimnasio;
 GO
 
+-- Activar estadísticas
+SET STATISTICS IO ON;
+SET STATISTICS TIME ON;
+
+-- Para obtenerlo como XML:
+-- SET STATISTICS XML ON;
+--GO
+
 -- CONSULTA 1: Ocupación y cupos disponibles por sesión.
 --Permite a recepción identificar sesiones llenas o con espacio.
 --Las sesiones sin reservas confirmadas aparecen con ocupación 0.
@@ -18,10 +26,10 @@ SELECT
         100.0 * COUNT(r.IdReserva) / NULLIF(s.CupoMaximo, 0)
         AS decimal(10, 2)
     ) AS PorcentajeOcupacion
-FROM dbo.SesionClase AS s
-JOIN dbo.Clase AS c
+FROM Gimnasio.Operacion.SesionClase AS s
+JOIN Gimnasio.Operacion.Clase AS c
     ON c.IdClase = s.IdClase
-LEFT JOIN dbo.Reserva AS r
+LEFT JOIN Gimnasio.Operacion.Reserva AS r
     ON r.IdSesion = s.IdSesion
    AND r.Estado = 'Confirmada'
 GROUP BY
@@ -29,11 +37,10 @@ GROUP BY
 ORDER BY s.Fecha, s.HoraInicio, s.IdSesion;
 GO
 
-
-
 -- CONSULTA 2: Ranking mensual de clases por demanda.
 -- Mide la demanda por reservas confirmadas en el mes de la sesión.
 -- El promedio incluye las sesiones registradas con cero reservas.
+-- Comparte el índice IX_Reserva_IdSesion_Estado de la consulta 1.
 
 WITH ReservasPorSesion AS (
     SELECT
@@ -41,8 +48,8 @@ WITH ReservasPorSesion AS (
         s.IdClase,
         DATEFROMPARTS(YEAR(s.Fecha), MONTH(s.Fecha), 1) AS Mes,
         COUNT(r.IdReserva) AS ReservasConfirmadas
-    FROM dbo.SesionClase AS s
-    LEFT JOIN dbo.Reserva AS r
+    FROM Gimnasio.Operacion.SesionClase AS s
+    LEFT JOIN Gimnasio.Operacion.Reserva AS r
         ON r.IdSesion = s.IdSesion
        AND r.Estado = 'Confirmada'
     GROUP BY
@@ -71,11 +78,25 @@ SELECT
         ORDER BY d.TotalReservas DESC
     ) AS PosicionPorDemanda
 FROM DemandaMensual AS d
-JOIN dbo.Clase AS c
+JOIN Gimnasio.Operacion.Clase AS c
     ON c.IdClase = d.IdClase
 ORDER BY d.Mes, PosicionPorDemanda, d.IdClase;
 GO
 
+-- Indice Consultas 1 y 2: buscar reservas confirmadas por sesion.
+-- Las claves permiten buscar por sesion y estado.
+IF NOT EXISTS (
+    SELECT 1 FROM Gimnasio.sys.indexes
+    WHERE object_id = OBJECT_ID(N'Gimnasio.Operacion.Reserva')
+      AND name = N'IX_Reserva_IdSesion_Estado'
+)
+    CREATE INDEX IX_Reserva_IdSesion_Estado
+        ON Gimnasio.Operacion.Reserva (IdSesion, Estado);
+GO
+
+-- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
+-- DROP INDEX IF EXISTS IX_Reserva_IdSesion_Estado
+-- ON Gimnasio.Operacion.Reserva;
 
 
 -- CONSULTA 3: Ingresos mensuales por membresía.
@@ -87,7 +108,7 @@ WITH IngresoMensual AS (
         DATEFROMPARTS(YEAR(p.Fecha), MONTH(p.Fecha), 1) AS Mes,
         p.IdMembresia,
         SUM(p.Monto) AS IngresoMembresia
-    FROM dbo.Pago AS p
+    FROM Gimnasio.Finanzas.Pago AS p
     WHERE p.Estado = 'Pagado'
     GROUP BY
         DATEFROMPARTS(YEAR(p.Fecha), MONTH(p.Fecha), 1),
@@ -107,11 +128,26 @@ SELECT
         ORDER BY i.IngresoMembresia DESC
     ) AS PosicionPorIngreso
 FROM IngresoMensual AS i
-JOIN dbo.Membresia AS m
+JOIN Gimnasio.Socios.Membresia AS m
     ON m.IdMembresia = i.IdMembresia
 ORDER BY i.Mes, PosicionPorIngreso, i.IdMembresia;
 GO
 
+-- Indice Consulta 3: localizar pagos por estado y cubrir fecha, membresía y monto.
+-- También cubre la consulta 9 por método de pago.
+IF NOT EXISTS (
+    SELECT 1 FROM Gimnasio.sys.indexes
+    WHERE object_id = OBJECT_ID(N'Gimnasio.Finanzas.Pago')
+      AND name = N'IX_Pago_Estado_Fecha_IdMembresia'
+)
+    CREATE INDEX IX_Pago_Estado_Fecha_IdMembresia
+        ON Gimnasio.Finanzas.Pago (Estado, Fecha, IdMembresia)
+        INCLUDE (Monto, Metodo);
+GO
+
+-- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
+-- DROP INDEX IF EXISTS IX_Pago_Estado_Fecha_IdMembresia
+-- ON Gimnasio.Finanzas.Pago;
 
 -- CONSULTA 4: Socios registrados por tipo de membresía.
 -- Incluye los planes que todavía tienen cero socios.
@@ -121,8 +157,8 @@ SELECT
     m.Nombre AS Membresia,
     m.Precio,
     COUNT(s.IdSocio) AS SociosRegistrados
-FROM dbo.Membresia AS m
-LEFT JOIN dbo.Socio AS s
+FROM Gimnasio.Socios.Membresia AS m
+LEFT JOIN Gimnasio.Socios.Socio AS s
     ON s.IdMembresia = m.IdMembresia
 GROUP BY m.IdMembresia, m.Nombre, m.Precio
 ORDER BY SociosRegistrados DESC, m.IdMembresia;
@@ -138,17 +174,31 @@ SELECT
     s.Apellidos,
     s.FechaRegistro,
     m.Nombre AS Membresia
-FROM dbo.Socio AS s
-JOIN dbo.Membresia AS m
+FROM Gimnasio.Socios.Socio AS s
+JOIN Gimnasio.Socios.Membresia AS m
     ON m.IdMembresia = s.IdMembresia
 WHERE NOT EXISTS (
     SELECT 1
-    FROM dbo.Reserva AS r
+    FROM Gimnasio.Operacion.Reserva AS r
     WHERE r.IdSocio = s.IdSocio
 )
 ORDER BY s.FechaRegistro, s.IdSocio;
 GO
 
+-- Indice Consulta 5: comprobar si existe alguna reserva del socio,
+-- sin importar el estado de la reserva.
+IF NOT EXISTS (
+    SELECT 1 FROM Gimnasio.sys.indexes
+    WHERE object_id = OBJECT_ID(N'Gimnasio.Operacion.Reserva')
+      AND name = N'IX_Reserva_IdSocio'
+)
+    CREATE INDEX IX_Reserva_IdSocio
+        ON Gimnasio.Operacion.Reserva (IdSocio);
+GO
+
+-- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
+-- DROP INDEX IF EXISTS IX_Reserva_IdSocio
+-- ON Gimnasio.Operacion.Reserva;
 
 -- CONSULTA 6: Entrenadores por especialidad.
 -- También identifica especialidades sin entrenador asignado.
@@ -160,10 +210,10 @@ SELECT
         WHEN e.IdEntrenador IS NULL THEN 'Sin entrenador asignado'
         ELSE CONCAT(e.Nombres, ' ', e.Apellidos)
     END AS Entrenador
-FROM dbo.Especialidad AS esp
-LEFT JOIN dbo.EntrenadorEspecialidad AS ee
+FROM Gimnasio.Personal.Especialidad AS esp
+LEFT JOIN Gimnasio.Personal.EntrenadorEspecialidad AS ee
     ON ee.IdEspecialidad = esp.IdEspecialidad
-LEFT JOIN dbo.Entrenador AS e
+LEFT JOIN Gimnasio.Personal.Entrenador AS e
     ON e.IdEntrenador = ee.IdEntrenador
 ORDER BY esp.Nombre, e.Apellidos, e.Nombres;
 GO
@@ -180,16 +230,30 @@ SELECT
     s.HoraFin,
     CONCAT(e.Nombres, ' ', e.Apellidos) AS Entrenador,
     s.Estado AS EstadoSesion
-FROM dbo.SesionClase AS s
-JOIN dbo.Clase AS c
+FROM Gimnasio.Operacion.SesionClase AS s
+JOIN Gimnasio.Operacion.Clase AS c
     ON c.IdClase = s.IdClase
-JOIN dbo.Entrenador AS e
+JOIN Gimnasio.Personal.Entrenador AS e
     ON e.IdEntrenador = s.IdEntrenador
 WHERE s.Fecha >= CAST(GETDATE() AS date)
   AND s.Fecha < DATEADD(day, 7, CAST(GETDATE() AS date))
 ORDER BY s.Fecha, s.HoraInicio, s.IdSesion;
 GO
 
+-- Indice Consulta 7: buscar sesiones por fecha y cubrir las columnas de la agenda.
+IF NOT EXISTS (
+    SELECT 1 FROM Gimnasio.sys.indexes
+    WHERE object_id = OBJECT_ID(N'Gimnasio.Operacion.SesionClase')
+      AND name = N'IX_SesionClase_Fecha_HoraInicio'
+)
+    CREATE INDEX IX_SesionClase_Fecha_HoraInicio
+        ON Gimnasio.Operacion.SesionClase (Fecha, HoraInicio, IdSesion)
+        INCLUDE (IdClase, IdEntrenador, HoraFin, Estado);
+GO
+
+-- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
+-- DROP INDEX IF EXISTS IX_SesionClase_Fecha_HoraInicio
+-- ON Gimnasio.Operacion.SesionClase;
 
 -- CONSULTA 8: Cantidad de socios nuevos por mes.
 -- Cada socio se cuenta en el mes de su fecha de registro.
@@ -197,21 +261,28 @@ GO
 SELECT
     DATEFROMPARTS(YEAR(s.FechaRegistro), MONTH(s.FechaRegistro), 1) AS Mes,
     COUNT(*) AS SociosNuevos
-FROM dbo.Socio AS s
+FROM Gimnasio.Socios.Socio AS s
 GROUP BY DATEFROMPARTS(YEAR(s.FechaRegistro), MONTH(s.FechaRegistro), 1)
 ORDER BY Mes;
 GO
 
 -- CONSULTA 9: Recaudación por método de pago.
 -- Cuenta los pagos cobrados y calcula el total y el promedio.
+-- Comparte el índice IX_Pago_Estado_Fecha_IdMembresia de la consulta 3.
 
 SELECT
     p.Metodo,
     COUNT(*) AS CantidadPagos,
     SUM(p.Monto) AS TotalCobrado,
     CAST(AVG(p.Monto) AS decimal(12, 2)) AS PromedioPorPago
-FROM dbo.Pago AS p
+FROM Gimnasio.Finanzas.Pago AS p
 WHERE p.Estado = 'Pagado'
 GROUP BY p.Metodo
 ORDER BY TotalCobrado DESC, p.Metodo;
+GO
+
+-- Desactiva las estadisticas para el resto de la sesion.
+--SET STATISTICS XML OFF;
+SET STATISTICS TIME OFF;
+SET STATISTICS IO OFF;
 GO
