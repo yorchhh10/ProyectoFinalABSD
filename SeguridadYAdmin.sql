@@ -69,6 +69,8 @@ WHERE name LIKE 'gym[_]%'
 ORDER BY name;
 GO
 
+----------------------------------------------------------
+--Roles y Usuarios
 --Roles por función, nunca permisos de un solo a usuarios
 USE Gimnasio;
 GO
