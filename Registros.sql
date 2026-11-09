@@ -353,7 +353,7 @@ begin catch
 end catch;
 go
 
--- Carga adicional de 200 registros para las consultas de la defensa.
+-- Carga adicional de registros
 set xact_abort on;
 begin try
     begin transaction;
@@ -430,6 +430,64 @@ begin try
             case when s.Numero <= 45 and s.Numero % 3 = 0 then 1
                  when s.Numero > 45 and s.Numero % 3 = 0 then 5
                  else 1 + s.Numero % 5 end;
+    end;
+
+    commit transaction;
+end try
+begin catch
+    if @@trancount > 0
+        rollback transaction;
+    throw;
+end catch;
+go
+
+-- Carga de 200 pagos de prueba para los reportes de recaudación.
+-- Enero y febrero de 2027 se reservan para este lote.
+set xact_abort on;
+begin try
+    begin transaction;
+
+    declare @PagosDelPeriodo int;
+    select @PagosDelPeriodo = count(*)
+    from Finanzas.Pago with (updlock, holdlock)
+    where Fecha >= '20270101' and Fecha < '20270301';
+
+    if @PagosDelPeriodo not in (0, 200)
+        throw 50003, 'El período del lote de prueba ya contiene otros pagos.', 1;
+
+    if @PagosDelPeriodo = 0
+    begin
+        if (select count(*) from Socios.Membresia
+            where Nombre in ('Basica', 'Estandar', 'Premium', 'Trimestral', 'Anual')) <> 5
+            throw 50004, 'Se necesitan los cinco planes de la carga inicial.', 1;
+
+        ;with Digitos as (
+            select Numero from (values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)) as d(Numero)
+        ),
+        Lote as (
+            select mes.Inicio, decena.Numero * 10 + unidad.Numero as Numero
+            from (values (cast('20270101' as date)), (cast('20270201' as date))) as mes(Inicio)
+            cross join Digitos as decena
+            cross join Digitos as unidad
+        )
+        insert into Finanzas.Pago (Monto, Fecha, Metodo, Estado, IdMembresia)
+        select m.Precio,
+               dateadd(day, l.Numero % 28, l.Inicio),
+               case when l.Numero % 7 < 3 then 'Tarjeta'
+                    when l.Numero % 7 < 5 then 'Efectivo'
+                    else 'Transferencia' end,
+               case when l.Numero % 10 = 9 then 'Pendiente' else 'Pagado' end,
+               m.IdMembresia
+        from Lote as l
+        join Socios.Membresia as m on m.Nombre =
+            case when l.Numero < 40 then 'Basica'
+                 when l.Numero < 65 then 'Estandar'
+                 when l.Numero < 85 then 'Premium'
+                 when l.Numero < 95 then 'Trimestral'
+                 else 'Anual' end;
+
+        if @@rowcount <> 200
+            throw 50005, 'La carga de prueba debe insertar exactamente 200 pagos.', 1;
     end;
 
     commit transaction;

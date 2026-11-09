@@ -95,8 +95,8 @@ IF NOT EXISTS (
 GO
 
 -- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
--- DROP INDEX IF EXISTS IX_Reserva_IdSesion_Estado
--- ON Gimnasio.Operacion.Reserva;
+ --DROP INDEX IF EXISTS IX_Reserva_IdSesion_Estado
+ --ON Gimnasio.Operacion.Reserva;
 
 
 -- CONSULTA 3: Ingresos mensuales por membresía.
@@ -132,22 +132,6 @@ JOIN Gimnasio.Socios.Membresia AS m
     ON m.IdMembresia = i.IdMembresia
 ORDER BY i.Mes, PosicionPorIngreso, i.IdMembresia;
 GO
-
--- Indice Consulta 3: localizar pagos por estado y cubrir fecha, membresía y monto.
--- También cubre la consulta 9 por método de pago.
-IF NOT EXISTS (
-    SELECT 1 FROM Gimnasio.sys.indexes
-    WHERE object_id = OBJECT_ID(N'Gimnasio.Finanzas.Pago')
-      AND name = N'IX_Pago_Estado_Fecha_IdMembresia'
-)
-    CREATE INDEX IX_Pago_Estado_Fecha_IdMembresia
-        ON Gimnasio.Finanzas.Pago (Estado, Fecha, IdMembresia)
-        INCLUDE (Monto, Metodo);
-GO
-
--- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
--- DROP INDEX IF EXISTS IX_Pago_Estado_Fecha_IdMembresia
--- ON Gimnasio.Finanzas.Pago;
 
 -- CONSULTA 4: Socios registrados por tipo de membresía.
 -- Incluye los planes que todavía tienen cero socios.
@@ -197,8 +181,8 @@ IF NOT EXISTS (
 GO
 
 -- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
--- DROP INDEX IF EXISTS IX_Reserva_IdSocio
--- ON Gimnasio.Operacion.Reserva;
+ --DROP INDEX IF EXISTS IX_Reserva_IdSocio
+ --ON Gimnasio.Operacion.Reserva;
 
 -- CONSULTA 6: Entrenadores por especialidad.
 -- También identifica especialidades sin entrenador asignado.
@@ -252,8 +236,8 @@ IF NOT EXISTS (
 GO
 
 -- Para repetir la prueba sin este índice, descomenta y ejecuta este comando por separado:
--- DROP INDEX IF EXISTS IX_SesionClase_Fecha_HoraInicio
--- ON Gimnasio.Operacion.SesionClase;
+--DROP INDEX IF EXISTS IX_SesionClase_Fecha_HoraInicio
+ --ON Gimnasio.Operacion.SesionClase;
 
 -- CONSULTA 8: Cantidad de socios nuevos por mes.
 -- Cada socio se cuenta en el mes de su fecha de registro.
@@ -268,7 +252,6 @@ GO
 
 -- CONSULTA 9: Recaudación por método de pago.
 -- Cuenta los pagos cobrados y calcula el total y el promedio.
--- Comparte el índice IX_Pago_Estado_Fecha_IdMembresia de la consulta 3.
 
 SELECT
     p.Metodo,
