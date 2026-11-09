@@ -353,6 +353,94 @@ begin catch
 end catch;
 go
 
+-- Carga adicional de 200 registros para las consultas de la defensa.
+set xact_abort on;
+begin try
+    begin transaction;
+
+    -- Esta sesión identifica la carga adicional y evita repetirla.
+    if not exists (
+        select 1
+        from Operacion.SesionClase with (updlock, holdlock)
+        where Fecha = '20261201' and HoraInicio = '08:00:00'
+    )
+    begin
+        declare @Clases table (Numero int primary key, IdClase int);
+        declare @Entrenadores table (Numero int primary key, IdEntrenador int);
+        declare @Socios table (Numero int primary key, IdSocio int);
+        declare @Planes table (Numero int primary key, IdMembresia int, Precio decimal(10,2));
+        declare @Sesiones table (IdSesion int, Fecha date, HoraInicio time);
+
+        insert into @Clases
+        select top (10) row_number() over (order by IdClase), IdClase
+        from Operacion.Clase order by IdClase;
+
+        insert into @Entrenadores
+        select top (10) row_number() over (order by IdEntrenador), IdEntrenador
+        from Personal.Entrenador order by IdEntrenador;
+
+        insert into @Socios
+        select top (90) row_number() over (order by IdSocio), IdSocio
+        from Socios.Socio order by IdSocio;
+
+        insert into @Planes
+        select top (5) row_number() over (order by IdMembresia), IdMembresia, Precio
+        from Socios.Membresia order by IdMembresia;
+
+        if (select count(*) from @Clases) <> 10
+           or (select count(*) from @Entrenadores) <> 10
+           or (select count(*) from @Socios) <> 90
+           or (select count(*) from @Planes) <> 5
+            throw 50002, 'Ejecuta primero la carga inicial de Gimnasio.', 1;
+
+        -- 20 sesiones: dos por clase en diciembre, con aforos de 6 y 12.
+        insert into Operacion.SesionClase
+            (Fecha, HoraInicio, HoraFin, CupoMaximo, Estado, IdEntrenador, IdClase)
+        output inserted.IdSesion, inserted.Fecha, inserted.HoraInicio into @Sesiones
+        select dateadd(day, c.Numero - 1, cast('20261201' as date)),
+               turno.Inicio, turno.Fin, turno.Cupo, 'Programada', e.IdEntrenador, c.IdClase
+        from @Clases as c
+        join @Entrenadores as e on e.Numero = c.Numero
+        cross join (values ('08:00:00', '09:00:00', 6),
+                           ('17:00:00', '18:00:00', 12)) as turno(Inicio, Fin, Cupo);
+
+        -- 90 reservas: algunas sesiones quedan vacías y otras llenas.
+        -- El turno matutino tiene hasta seis confirmadas; las demás se cancelan.
+        insert into Operacion.Reserva (Fecha, Estado, IdSocio, IdSesion)
+        select dateadd(day, -3, se.Fecha),
+               case when se.HoraInicio = '08:00:00' and so.Numero > 6
+                    then 'Cancelada' else 'Confirmada' end,
+               so.IdSocio, se.IdSesion
+        from @Sesiones as se
+        join @Socios as so on so.Numero <= datediff(day, '20261201', se.Fecha);
+
+        -- 90 pagos: noviembre y diciembre, con mezcla de planes,
+        -- métodos de pago y estados Pagado/Pendiente.
+        insert into Finanzas.Pago (Monto, Fecha, Metodo, Estado, IdMembresia)
+        select p.Precio,
+               dateadd(day, (s.Numero - 1) % 28,
+                   case when s.Numero <= 45 then cast('20261101' as date)
+                        else cast('20261201' as date) end),
+               case s.Numero % 3 when 0 then 'Efectivo'
+                    when 1 then 'Tarjeta' else 'Transferencia' end,
+               case when s.Numero % 5 = 0 then 'Pendiente' else 'Pagado' end,
+               p.IdMembresia
+        from @Socios as s
+        join @Planes as p on p.Numero =
+            case when s.Numero <= 45 and s.Numero % 3 = 0 then 1
+                 when s.Numero > 45 and s.Numero % 3 = 0 then 5
+                 else 1 + s.Numero % 5 end;
+    end;
+
+    commit transaction;
+end try
+begin catch
+    if @@trancount > 0
+        rollback transaction;
+    throw;
+end catch;
+go
+
 -- comprobar la cantidad insertada en cada tabla
 select 'Membresia' as Tabla, count(*) as Cantidad from Socios.Membresia
 union all select 'Socio', count(*) from Socios.Socio
