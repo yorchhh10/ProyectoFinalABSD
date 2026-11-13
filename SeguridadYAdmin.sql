@@ -60,6 +60,9 @@ CREATE LOGIN gym_analitica  WITH PASSWORD = N'research3R$',
 CREATE LOGIN gym_app        WITH PASSWORD = N'Applicac1A0', 
   CHECK_POLICY = ON, 
   CHECK_EXPIRATION = OFF; --No seria humano la aplicacion entonces se pone OFF
+CREATE LOGIN gym_backup WITH PASSWORD = N'Rest@urac10n',
+  CHECK_POLICY = ON, 
+  CHECK_EXPIRATION = ON;
 GO
 
 --Consultar las politicas del login de cada uno
@@ -81,6 +84,7 @@ CREATE USER gym_entrenador FOR LOGIN gym_entrenador;
 CREATE USER gym_finanzas FOR LOGIN gym_finanzas;
 CREATE USER gym_analitica FOR LOGIN gym_analitica;
 CREATE USER gym_app FOR LOGIN gym_app;
+CREATE USER gym_backup FOR LOGIN gym_backup;
 GO
 
 --Roles
@@ -89,6 +93,7 @@ CREATE ROLE rol_entrenador;
 CREATE ROLE rol_finanzas;
 CREATE ROLE rol_analitica;
 CREATE ROLE rol_app;
+CREATE ROLE rol_backup;
 GO
 
 --Agregar usuarios a los roles
@@ -97,6 +102,7 @@ ALTER ROLE rol_entrenador ADD MEMBER gym_entrenador;
 ALTER ROLE rol_finanzas   ADD MEMBER gym_finanzas;
 ALTER ROLE rol_analitica  ADD MEMBER gym_analitica;
 ALTER ROLE rol_app        ADD MEMBER gym_app;
+ALTER ROLE rol_backup     ADD MEMBER gym_backup;
 GO
 
 --Consulta de los login e usuarios dentro del login
@@ -158,6 +164,23 @@ DENY  ALTER  ON SCHEMA::Socios TO rol_app;
 DENY  ALTER  ON SCHEMA::Operacion TO rol_app;
 DENY  ALTER  ON SCHEMA::Finanzas TO rol_app;
 DENY  ALTER  ON SCHEMA::Personal TO rol_app;
+GO
+
+--rol_backup: solo backup, no autorizacion de leer datos
+GRANT BACKUP DATABASE, BACKUP LOG TO rol_backup;
+GO
+
+-----------------------------------------------------
+--Dar permisos en msdb para administrar jobs, solamente
+--con el propio rol propio no basta, sino que en un rol
+--fijo adecuado para backups
+USE msdb;
+GO
+
+CREATE USER gym_backup FOR LOGIN gym_backup;
+GO
+
+ALTER ROLE SQLAgentUserRole ADD MEMBER gym_backup;
 GO
 
 --Consulta de los permisos registrados
@@ -335,17 +358,14 @@ DROP USER IF EXISTS gym_entrenador;
 DROP USER IF EXISTS gym_finanzas;
 DROP USER IF EXISTS gym_analitica;
 DROP USER IF EXISTS gym_app;
-DROP ROLE IF EXISTS rol_recepcion;
-DROP ROLE IF EXISTS rol_entrenador;
-DROP ROLE IF EXISTS rol_finanzas;
-DROP ROLE IF EXISTS rol_analitica;
-DROP ROLE IF EXISTS rol_app;
+DROP USER IF EXISTS gym_backup;
 GO
 DROP ROLE IF EXISTS rol_recepcion;
 DROP ROLE IF EXISTS rol_entrenador;
 DROP ROLE IF EXISTS rol_finanzas;
 DROP ROLE IF EXISTS rol_analitica;
 DROP ROLE IF EXISTS rol_app;
+DROP ROLE IF EXISTS rol_backup;
 GO
 USE master;
 GO
@@ -354,4 +374,5 @@ IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_entrenador') DR
 IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_finanzas')   DROP LOGIN gym_finanzas;
 IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_analitica')  DROP LOGIN gym_analitica;
 IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_app')        DROP LOGIN gym_app;
+IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_backup')     DROP LOGIN gym_backup;
 GO
