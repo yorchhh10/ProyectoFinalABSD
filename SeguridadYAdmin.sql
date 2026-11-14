@@ -55,7 +55,7 @@ CREATE LOGIN gym_finanzas   WITH PASSWORD = N'c0ntabilidAd$',
   CHECK_EXPIRATION = ON;
 CREATE LOGIN gym_analitica  WITH PASSWORD = N'research3R$', 
   CHECK_POLICY = ON, 
-  CHECK_EXPIRATION = ON;
+  CHECK_EXPIRATION = OFF;
 --Cuenta de apliacion o servicio
 CREATE LOGIN gym_app        WITH PASSWORD = N'Applicac1A0', 
   CHECK_POLICY = ON, 
@@ -79,12 +79,12 @@ USE Gimnasio;
 GO
 
 --Usuarios
-CREATE USER gym_recepcion FOR LOGIN gym_recepcion;
-CREATE USER gym_entrenador FOR LOGIN gym_entrenador;
-CREATE USER gym_finanzas FOR LOGIN gym_finanzas;
-CREATE USER gym_analitica FOR LOGIN gym_analitica;
-CREATE USER gym_app FOR LOGIN gym_app;
-CREATE USER gym_backup FOR LOGIN gym_backup;
+CREATE USER user_recepcion FOR LOGIN gym_recepcion;
+CREATE USER user_entrenador FOR LOGIN gym_entrenador;
+CREATE USER user_finanzas FOR LOGIN gym_finanzas;
+CREATE USER user_analitica FOR LOGIN gym_analitica;
+CREATE USER user_app FOR LOGIN gym_app;
+CREATE USER user_backup FOR LOGIN gym_backup;
 GO
 
 --Roles
@@ -93,16 +93,15 @@ CREATE ROLE rol_entrenador;
 CREATE ROLE rol_finanzas;
 CREATE ROLE rol_analitica;
 CREATE ROLE rol_app;
-CREATE ROLE rol_backup;
 GO
 
 --Agregar usuarios a los roles
-ALTER ROLE rol_recepcion  ADD MEMBER gym_recepcion;
-ALTER ROLE rol_entrenador ADD MEMBER gym_entrenador;
-ALTER ROLE rol_finanzas   ADD MEMBER gym_finanzas;
-ALTER ROLE rol_analitica  ADD MEMBER gym_analitica;
-ALTER ROLE rol_app        ADD MEMBER gym_app;
-ALTER ROLE rol_backup     ADD MEMBER gym_backup;
+ALTER ROLE rol_recepcion  ADD MEMBER user_recepcion;
+ALTER ROLE rol_entrenador ADD MEMBER user_entrenador;
+ALTER ROLE rol_finanzas   ADD MEMBER user_finanzas;
+ALTER ROLE rol_analitica  ADD MEMBER user_analitica;
+ALTER ROLE rol_app        ADD MEMBER user_app;
+ALTER ROLE db_backupoperator ADD MEMBER user_backup; --Usamos un rol ya determinado de SSMS
 GO
 
 --Consulta de los login e usuarios dentro del login
@@ -120,6 +119,15 @@ WHERE r.name LIKE 'rol[_]%'
 ORDER BY r.name;
 GO
 
+--Consulta del usuario de backups
+SELECT r.name AS nombre_rol, m.name AS miembro_usuario
+FROM sys.database_role_members rm
+JOIN sys.database_principals r ON rm.role_principal_id = r.principal_id
+JOIN sys.database_principals m ON rm.member_principal_id = m.principal_id
+WHERE r.name LIKE 'db_backupoperator'
+ORDER BY r.name;
+GO
+
 ----------------------------------------------------------------------
 --PERMISOS (mínimo privilegio + defensa en profundidad)
 -- rol_recepcion: gestiona socios y reservas, registra pagos; no borra
@@ -132,7 +140,7 @@ DENY  DELETE ON SCHEMA::Socios TO rol_recepcion;
 DENY  DELETE ON SCHEMA::Operacion TO rol_recepcion;
 DENY  DELETE ON SCHEMA::Finanzas TO rol_recepcion;
 
--- rol_entrenador: ve sus sesiones y solo nombre del socio (sin DUI/teléfono/correo)
+-- rol_entrenador: ve todas las sesiones y solo nombre del socio (sin DUI/teléfono/correo)
 GRANT SELECT ON SCHEMA::Operacion TO rol_entrenador;
 GRANT UPDATE ON Operacion.SesionClase (Estado) TO rol_entrenador;
 GRANT SELECT ON Socios.Socio (IdSocio, Nombres, Apellidos) TO rol_entrenador;
@@ -140,7 +148,7 @@ DENY  DELETE, INSERT ON SCHEMA::Operacion TO rol_entrenador;
 
 -- rol_finanzas: administra pagos y lee membresías; no borra
 GRANT SELECT, INSERT, UPDATE ON SCHEMA::Finanzas TO rol_finanzas;
-GRANT SELECT ON Socios.Membresia TO rol_finanzas;
+GRANT SELECT ON SCHEMA::Socios TO rol_finanzas;
 DENY  DELETE ON SCHEMA::Finanzas TO rol_finanzas;
 
 -- rol_analitica (Power BI): solo lectura, sin datos personales sensibles
@@ -156,6 +164,7 @@ GRANT SELECT, INSERT, UPDATE ON SCHEMA::Socios TO rol_app;
 GRANT SELECT, INSERT, UPDATE ON Operacion.Reserva TO rol_app;
 GRANT SELECT ON Operacion.Clase TO rol_app;
 GRANT SELECT ON Operacion.SesionClase TO rol_app;
+GRANT SELECT ON Personal.Entrenador TO rol_app;
 GRANT SELECT, INSERT ON Finanzas.Pago TO rol_app;
 DENY  DELETE ON SCHEMA::Socios TO rol_app;
 DENY  DELETE ON SCHEMA::Operacion TO rol_app;
@@ -164,23 +173,6 @@ DENY  ALTER  ON SCHEMA::Socios TO rol_app;
 DENY  ALTER  ON SCHEMA::Operacion TO rol_app;
 DENY  ALTER  ON SCHEMA::Finanzas TO rol_app;
 DENY  ALTER  ON SCHEMA::Personal TO rol_app;
-GO
-
---rol_backup: solo backup, no autorizacion de leer datos
-GRANT BACKUP DATABASE, BACKUP LOG TO rol_backup;
-GO
-
------------------------------------------------------
---Dar permisos en msdb para administrar jobs, solamente
---con el propio rol propio no basta, sino que en un rol
---fijo adecuado para backups
-USE msdb;
-GO
-
-CREATE USER gym_backup FOR LOGIN gym_backup;
-GO
-
-ALTER ROLE SQLAgentUserRole ADD MEMBER gym_backup;
 GO
 
 --Consulta de los permisos registrados
@@ -195,9 +187,18 @@ WHERE pr.name LIKE 'rol[_]%'
 ORDER BY pr.name, pe.state_desc, pe.permission_name;
 GO
 
+--Ver los permisos de user_backup
+EXECUTE AS USER = 'user_backup';
+SELECT permission_name
+FROM fn_my_permissions(NULL, 'DATABASE')   -- permisos a nivel de base de datos
+ORDER BY permission_name;
+REVERT;
+GO
+
+---------------------------------------------------------------------------
 --Antes, en PowerShell:  docker exec sqlserver-2025 mkdir -p /audit/Gimnasio
 --Si no se puede iniciar como administrador o desde docker desktop
---MAX_FILES = 5: si se llena la carpeta, la auditoría no inicia.
+--MAX_FILES = 5: si se llena la carpeta, las acciones fallan.
 USE master;
 GO
 CREATE SERVER AUDIT AuditoriaGimnasio
@@ -215,7 +216,9 @@ GO
 -- (Extra) Intentos fallidos de inicio de sesión: evidencia de la política de contraseñas
 CREATE SERVER AUDIT SPECIFICATION AuditoriaLoginsGimnasio
 FOR SERVER AUDIT AuditoriaGimnasio
-ADD (FAILED_LOGIN_GROUP)
+ADD (FAILED_LOGIN_GROUP),
+--Auditorias de informe de operaciones de backup y restore
+ADD (BACKUP_RESTORE_GROUP)
 WITH (STATE = ON);
 GO
 
@@ -249,20 +252,20 @@ GO
 ---------------------------------------------------------------------
 --PRUEBAS CON EXECUTE AS diferentes usuarios y siempre cerrar con REVERT.
 --Salida de denegado por defecto: analítica no puede insertar (Error 229)
-EXECUTE AS USER = 'gym_analitica';
+EXECUTE AS USER = 'user_analitica';
 INSERT INTO Socios.Membresia (Nombre, Precio, Duracion) VALUES ('Intruso', 1, 1);
 REVERT;
 GO
 
 -- Salida de analítica no puede leer datos personales (Error 230); sí columnas no sensibles
-EXECUTE AS USER = 'gym_analitica';
+EXECUTE AS USER = 'user_analitica';
 SELECT Dui FROM Socios.Socio;                         -- Error 230
 SELECT IdSocio, Nombres, FechaRegistro FROM Socios.Socio;  -- SELECT en objetos permitida
 REVERT;
 GO
 
 --Recepción: puede insertar/actualizar socios; no puede borrar (Error 229)
-EXECUTE AS USER = 'gym_recepcion';
+EXECUTE AS USER = 'user_recepcion';
 INSERT INTO Socios.Socio (Nombres, Apellidos, Dui, FechaRegistro, IdMembresia)
 VALUES ('Ana', 'Pérez', '01234567-8', GETDATE(), (SELECT TOP 1 IdMembresia FROM Socios.Membresia)); --INSERT permitido
 UPDATE Socios.Socio SET Telefono = '7000-0000' WHERE Dui = '01234567-8'; --UPDATE permitido
@@ -271,14 +274,14 @@ REVERT;
 GO
 
 --Entrenador: ve nombre del socio pero no el DUI (Error 230)
-EXECUTE AS USER = 'gym_entrenador';
+EXECUTE AS USER = 'user_entrenador';
 SELECT IdSocio, Nombres, Apellidos FROM Socios.Socio;  -- SELECT en objetos permitido
 SELECT Dui FROM Socios.Socio;                          -- Error 230, permiso denegado
 REVERT;
 GO
 
 --Finanzas: registra pago; no puede borrar (Error 229)
-EXECUTE AS USER = 'gym_finanzas';
+EXECUTE AS USER = 'user_finanzas';
 INSERT INTO Finanzas.Pago (Monto, Fecha, Metodo, Estado, IdMembresia)
 VALUES (25.00, GETDATE(), 'Efectivo', 'Pagado',
         (SELECT TOP 1 IdMembresia FROM Socios.Membresia)); --INSERT permitido
@@ -287,19 +290,25 @@ REVERT;
 GO
 
 --App: no puede alterar estructura (Error 229)
-EXECUTE AS USER = 'gym_app';
-ALTER TABLE Socios.Socio ADD Prueba INT NULL;          -- Error 229, permiso denegado
+EXECUTE AS USER = 'user_app';
+ALTER TABLE Socios.Socio ADD Prueba INT NULL;          -- Error 1088, permiso denegado
 REVERT;
 GO
 
+--Backup: Solamente puede hacer el backup, pero no puede leer datos
+EXECUTE AS USER = 'user_backup';
+BACKUP DATABASE Gimnasio TO DISK = N'/var/opt/mssql/backup/Gimnasio_prueba.bak';  -- permitido
+SELECT * FROM Socios.Socio;                                                    -- Error 209, denegado
+REVERT;
+
 --Permisos efectivos
-EXECUTE AS USER = 'gym_app';
-SELECT 'gym_app' AS usuario, entity_name, permission_name
+EXECUTE AS USER = 'user_app';
+SELECT 'user_app' AS usuario, entity_name, permission_name
 FROM fn_my_permissions('Socios.Socio', 'OBJECT');
 REVERT;
 GO
-EXECUTE AS USER = 'gym_analitica';
-SELECT 'gym_analitica' AS usuario, entity_name, permission_name
+EXECUTE AS USER = 'user_analitica';
+SELECT 'user_analitica' AS usuario, entity_name, permission_name
 FROM fn_my_permissions('Socios.Socio', 'OBJECT');
 REVERT;
 GO
@@ -322,28 +331,12 @@ GO
 
 -- Intentos fallidos de login: provocar uno conectándose a SSMS con mala clave
 -- y luego consultar:
-EXEC sys.xp_readerrorlog 0, 1, 'Login failed';
+EXEC sys.sp_readerrorlog 0, 1, 'Login failed';
 GO
 
 /* ---------------------------------------------------------------------
    LIMPIEZA (solo si necesitan repetir; destruir la evidencia de auditoria)
    ---------------------------------------------------------------------
--- USE Gimnasio;
--- ALTER DATABASE AUDIT SPECIFICATION AuditoriaGimnasioDB WITH (STATE = OFF);
--- DROP DATABASE AUDIT SPECIFICATION AuditoriaGimnasioDB;
--- USE master;
--- ALTER SERVER AUDIT SPECIFICATION AuditoriaLoginsGimnasio WITH (STATE = OFF);
--- DROP SERVER AUDIT SPECIFICATION AuditoriaLoginsGimnasio;
--- ALTER SERVER AUDIT AuditoriaGimnasio WITH (STATE = OFF);
--- DROP SERVER AUDIT AuditoriaGimnasio;
--- USE Gimnasio;
--- DROP USER IF EXISTS gym_recepcion, gym_entrenador, gym_finanzas, gym_analitica, gym_app;
--- DROP ROLE IF EXISTS rol_recepcion, rol_entrenador, rol_finanzas, rol_analitica, rol_app;
--- USE master;
--- DROP LOGIN gym_recepcion; DROP LOGIN gym_entrenador; DROP LOGIN gym_finanzas;
--- DROP LOGIN gym_analitica; DROP LOGIN gym_app;
-   --------------------------------------------------------------------- */
-
 USE Gimnasio;
 ALTER DATABASE AUDIT SPECIFICATION AuditoriaGimnasioDB WITH (STATE = OFF);
 DROP DATABASE AUDIT SPECIFICATION AuditoriaGimnasioDB;
@@ -353,12 +346,12 @@ DROP SERVER AUDIT SPECIFICATION AuditoriaLoginsGimnasio;
 ALTER SERVER AUDIT AuditoriaGimnasio WITH (STATE = OFF);
 DROP SERVER AUDIT AuditoriaGimnasio;
 USE Gimnasio;
-DROP USER IF EXISTS gym_recepcion;
-DROP USER IF EXISTS gym_entrenador;
-DROP USER IF EXISTS gym_finanzas;
-DROP USER IF EXISTS gym_analitica;
-DROP USER IF EXISTS gym_app;
-DROP USER IF EXISTS gym_backup;
+DROP USER IF EXISTS user_recepcion;
+DROP USER IF EXISTS user_entrenador;
+DROP USER IF EXISTS user_finanzas;
+DROP USER IF EXISTS user_analitica;
+DROP USER IF EXISTS user_app;
+DROP USER IF EXISTS user_backup;
 GO
 DROP ROLE IF EXISTS rol_recepcion;
 DROP ROLE IF EXISTS rol_entrenador;
@@ -376,3 +369,4 @@ IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_analitica')  DR
 IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_app')        DROP LOGIN gym_app;
 IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'gym_backup')     DROP LOGIN gym_backup;
 GO
+   --------------------------------------------------------------------- */
