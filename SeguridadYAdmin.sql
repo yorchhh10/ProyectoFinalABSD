@@ -323,7 +323,7 @@ GO
 
 --Backup: Solamente puede hacer el backup, pero no puede leer datos
 EXECUTE AS USER = 'user_backup';
-BACKUP DATABASE Gimnasio TO DISK = N'/var/opt/mssql/backup/Gimnasio_prueba.bak';  -- permitido
+BACKUP DATABASE Gimnasio TO DISK = N'/backup/Gimnasio_prueba.bak';  -- permitido
 SELECT * FROM Socios.Socio;                                                    -- Error 209, denegado
 REVERT;
 
