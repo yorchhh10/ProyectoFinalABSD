@@ -9,32 +9,52 @@ SET STATISTICS TIME ON;
 -- SET STATISTICS XML ON;
 --GO
 
--- CONSULTA 1: Ocupación y cupos disponibles por sesión.
---Permite a recepción identificar sesiones llenas o con espacio.
---Las sesiones sin reservas confirmadas aparecen con ocupación 0.
+-- CONSULTA 1: Ocupación, cupos disponibles y posición de cada sesión en su clase.
+-- Una sesión con cupo positivo y sin reservas confirmadas tiene 0 % de ocupación.
+-- Los empates comparten posición. Una sesión con cupo cero queda sin posición.
 
+WITH OcupacionPorSesion AS (
+    SELECT
+        s.IdSesion,
+        s.IdClase,
+        c.Nombre AS Clase,
+        s.Fecha,
+        s.HoraInicio,
+        s.Estado AS EstadoSesion,
+        s.CupoMaximo,
+        COUNT(r.IdReserva) AS ReservasConfirmadas,
+        s.CupoMaximo - COUNT(r.IdReserva) AS CuposDisponibles,
+        CAST(
+            100.0 * COUNT(r.IdReserva) / NULLIF(s.CupoMaximo, 0)
+            AS decimal(10, 2)
+        ) AS PorcentajeOcupacion
+    FROM Gimnasio.Operacion.SesionClase AS s
+    JOIN Gimnasio.Operacion.Clase AS c
+        ON c.IdClase = s.IdClase
+    LEFT JOIN Gimnasio.Operacion.Reserva AS r
+        ON r.IdSesion = s.IdSesion
+       AND r.Estado = 'Confirmada'
+    GROUP BY
+        s.IdSesion, s.IdClase, c.Nombre, s.Fecha, s.HoraInicio, s.Estado, s.CupoMaximo
+)
 SELECT
-    s.IdSesion,
-    c.Nombre AS Clase,
-    s.Fecha,
-    s.HoraInicio,
-    s.Estado AS EstadoSesion,
-    s.CupoMaximo,
-    COUNT(r.IdReserva) AS ReservasConfirmadas,
-    s.CupoMaximo - COUNT(r.IdReserva) AS CuposDisponibles,
-    CAST(
-        100.0 * COUNT(r.IdReserva) / NULLIF(s.CupoMaximo, 0)
-        AS decimal(10, 2)
-    ) AS PorcentajeOcupacion
-FROM Gimnasio.Operacion.SesionClase AS s
-JOIN Gimnasio.Operacion.Clase AS c
-    ON c.IdClase = s.IdClase
-LEFT JOIN Gimnasio.Operacion.Reserva AS r
-    ON r.IdSesion = s.IdSesion
-   AND r.Estado = 'Confirmada'
-GROUP BY
-    s.IdSesion, c.Nombre, s.Fecha, s.HoraInicio, s.Estado, s.CupoMaximo
-ORDER BY s.Fecha, s.HoraInicio, s.IdSesion;
+    o.IdSesion,
+    o.Clase,
+    o.Fecha,
+    o.HoraInicio,
+    o.EstadoSesion,
+    o.CupoMaximo,
+    o.ReservasConfirmadas,
+    o.CuposDisponibles,
+    o.PorcentajeOcupacion,
+    CASE WHEN o.PorcentajeOcupacion IS NOT NULL THEN
+        DENSE_RANK() OVER (
+            PARTITION BY o.IdClase
+            ORDER BY o.PorcentajeOcupacion DESC
+        )
+    END AS PosicionPorOcupacion
+FROM OcupacionPorSesion AS o
+ORDER BY o.Fecha, o.HoraInicio, o.IdSesion;
 GO
 
 -- CONSULTA 2: Ranking mensual de clases por demanda.
@@ -204,7 +224,7 @@ GO
 
 
 -- CONSULTA 7: Agenda de clases de los próximos siete días, incluyendo hoy.
--- Muestra quién imparte cada sesión y su estado registrado.
+-- Muestra el entrenador, el estado y el orden de cada sesión dentro del día.
 
 SELECT
     s.IdSesion,
@@ -213,7 +233,11 @@ SELECT
     s.HoraInicio,
     s.HoraFin,
     CONCAT(e.Nombres, ' ', e.Apellidos) AS Entrenador,
-    s.Estado AS EstadoSesion
+    s.Estado AS EstadoSesion,
+    ROW_NUMBER() OVER (
+        PARTITION BY s.Fecha
+        ORDER BY s.HoraInicio, s.IdSesion
+    ) AS NumeroSesionDelDia
 FROM Gimnasio.Operacion.SesionClase AS s
 JOIN Gimnasio.Operacion.Clase AS c
     ON c.IdClase = s.IdClase
