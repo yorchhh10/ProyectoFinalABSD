@@ -90,7 +90,6 @@ CREATE USER user_finanzas FOR LOGIN gym_finanzas;
 CREATE USER user_analitica FOR LOGIN gym_analitica;
 CREATE USER user_app FOR LOGIN gym_app;
 CREATE USER user_backup FOR LOGIN gym_backup;
-CREATE USER user_seguridad FOR LOGIN gym_admin;
 GO
 
 --Roles
@@ -110,7 +109,6 @@ ALTER ROLE rol_entrenador ADD MEMBER user_entrenador;
 ALTER ROLE rol_finanzas   ADD MEMBER user_finanzas;
 ALTER ROLE rol_analitica  ADD MEMBER user_analitica;
 ALTER ROLE rol_app        ADD MEMBER user_app;
-ALTER ROLE rol_seguridad  ADD MEMBER user_seguridad;
 ALTER ROLE db_backupoperator ADD MEMBER user_backup; --Usamos un rol ya determinado de SSMS
 GO
 
@@ -198,23 +196,6 @@ DENY  ALTER  ON SCHEMA::Socios TO rol_app;
 DENY  ALTER  ON SCHEMA::Operacion TO rol_app;
 DENY  ALTER  ON SCHEMA::Finanzas TO rol_app;
 DENY  ALTER  ON SCHEMA::Personal TO rol_app;
-GO
-
---rol_seguridad: Puede crear/quitar usuarios y administrar membresía de roles funcionales
-GRANT ALTER ANY USER TO rol_seguridad_gym;
-GRANT ALTER ON ROLE::rol_recepcion  TO rol_seguridad_gym;
-GRANT ALTER ON ROLE::rol_entrenador TO rol_seguridad_gym;
-GRANT ALTER ON ROLE::rol_finanzas   TO rol_seguridad_gym;
-GRANT ALTER ON ROLE::rol_analitica  TO rol_seguridad_gym;
-GRANT ALTER ON ROLE::rol_app        TO rol_seguridad_gym;
--- No puede tocarse a sí mismo ni a los roles administrativos
-DENY ALTER ON ROLE::rol_admin_gym     TO rol_seguridad_gym;
-DENY ALTER ON ROLE::rol_seguridad_gym TO rol_seguridad_gym;
--- Sin acceso a los datos
-DENY SELECT, INSERT, UPDATE, DELETE ON SCHEMA::Socios    TO rol_seguridad_gym;
-DENY SELECT, INSERT, UPDATE, DELETE ON SCHEMA::Operacion TO rol_seguridad_gym;
-DENY SELECT, INSERT, UPDATE, DELETE ON SCHEMA::Finanzas  TO rol_seguridad_gym;
-DENY SELECT, INSERT, UPDATE, DELETE ON SCHEMA::Personal  TO rol_seguridad_gym;
 GO
 
 --Consulta de los permisos registrados
@@ -347,14 +328,6 @@ BACKUP DATABASE Gimnasio TO DISK = N'/var/opt/mssql/backup/Gimnasio_prueba.bak';
 SELECT * FROM Socios.Socio;                                                    -- Error 209, denegado
 REVERT;
 
---Seguridad: solo cambiar roles entre los asignados, no podra otros roles
-EXECUTE AS USER = 'user_seguridad';
-ALTER ROLE rol_recepcion ADD MEMBER user_entrenador;   -- permitido
-ALTER ROLE db_owner ADD MEMBER user_seguridad;         -- denegado
-SELECT * FROM Socios.Socio;                            -- Error 229, denegado
-REVERT;
-GO
-
 --Permisos efectivos
 EXECUTE AS USER = 'user_app';
 SELECT 'user_app' AS usuario, entity_name, permission_name
@@ -407,7 +380,6 @@ DROP USER IF EXISTS user_analitica;
 DROP USER IF EXISTS user_app;
 DROP USER IF EXISTS user_backup;
 DROP USER IF EXISTS user_admin;
-DROP USER IF EXISTS user_seguridad;
 GO
 DROP ROLE IF EXISTS rol_recepcion;
 DROP ROLE IF EXISTS rol_entrenador;
@@ -415,7 +387,6 @@ DROP ROLE IF EXISTS rol_finanzas;
 DROP ROLE IF EXISTS rol_analitica;
 DROP ROLE IF EXISTS rol_app;
 DROP ROLE IF EXISTS rol_admin;
-DROP ROLE IF EXISTS rol_seguridad;
 GO
 USE master;
 GO
