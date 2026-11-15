@@ -99,7 +99,6 @@ CREATE ROLE rol_entrenador;
 CREATE ROLE rol_finanzas;
 CREATE ROLE rol_analitica;
 CREATE ROLE rol_app;
-CREATE ROLE rol_seguridad;
 GO
 
 --Agregar usuarios a los roles
